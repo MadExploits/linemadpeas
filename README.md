@@ -373,27 +373,6 @@ Kontribusi sangat diterima! Silakan:
 - [HackTricks](https://book.hacktricks.xyz) - Privilege escalation guide
 
 ---
-
-## 📝 Changelog
-
-### Version 1.2.0
-
-- ✨ Added DirtyPipe (CVE-2022-0847) detection
-- 🎨 Enhanced UI with better formatting
-- 📚 Added comprehensive README
-
-### Version 1.1.0
-
-- ✨ Added exploit methods for all vulnerabilities
-- 🎨 Improved UI with progress bar
-- 📊 Dual output files (report + exploit methods)
-
-### Version 1.0.0
-
-- 🎉 Initial release
-- ✅ 25+ vulnerability checks
-- 📝 Basic reporting
-
 ---
 
 ## 👤 Author
