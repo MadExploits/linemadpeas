@@ -3,7 +3,6 @@
 ################################################################################
 # Linux Privilege Escalation Enumeration Tool
 # Comprehensive script to find privilege escalation vulnerabilities
-# With Exploit Methods and Enhanced UI
 ################################################################################
 
 # Enhanced Colors
@@ -21,7 +20,7 @@ GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
 # Progress counter
-TOTAL_CHECKS=30
+TOTAL_CHECKS=31
 CURRENT_CHECK=0
 
 # Vulnerability counters
@@ -1361,10 +1360,267 @@ if [ "$KERNEL_MAJOR" -lt 4 ] || ([ "$KERNEL_MAJOR" -eq 4 ] && [ "$KERNEL_MINOR" 
 fi
 
 ################################################################################
-# 30. SUMMARY AND RECOMMENDATIONS
+# 30. PASSWORD AND CREDENTIAL SEARCH
+################################################################################
+progress "Password & Credential Search"
+section "30. PASSWORD AND CREDENTIAL SEARCH"
+
+info "Searching for potential passwords and credentials in files..."
+
+PASSWORD_PATTERNS=(
+    "password"
+    "passwd"
+    "pwd"
+    "secret"
+    "key"
+    "token"
+    "api_key"
+    "apikey"
+    "apisecret"
+    "access_token"
+    "accesskey"
+    "private_key"
+    "privatekey"
+    "secretkey"
+    "auth"
+    "credential"
+    "mysql"
+    "postgres"
+    "database"
+    "db_password"
+    "dbpass"
+    "dbuser"
+    "admin"
+    "root"
+)
+
+# Common file extensions and locations to search
+SEARCH_LOCATIONS=(
+    "$HOME"
+    "/tmp"
+    "/var/tmp"
+    "/opt"
+    "/usr/local"
+    "/etc"
+)
+
+PASSWORD_FOUND=0
+PASSWORD_FILES=()
+
+# Function to search for passwords in files
+search_passwords() {
+    local search_dir="$1"
+    local max_depth=3
+    
+    if [ ! -d "$search_dir" ] || [ ! -r "$search_dir" ]; then
+        return
+    fi
+    
+    # Search in common file types
+    find "$search_dir" -maxdepth "$max_depth" -type f \( \
+        -name "*.conf" -o \
+        -name "*.config" -o \
+        -name "*.cfg" -o \
+        -name "*.ini" -o \
+        -name "*.env" -o \
+        -name ".env" -o \
+        -name "*.sh" -o \
+        -name "*.py" -o \
+        -name "*.pl" -o \
+        -name "*.rb" -o \
+        -name "*.php" -o \
+        -name "*.js" -o \
+        -name "*.json" -o \
+        -name "*.xml" -o \
+        -name "*.yml" -o \
+        -name "*.yaml" -o \
+        -name "*.properties" -o \
+        -name "*.sql" -o \
+        -name "*.log" -o \
+        -name "*.bak" -o \
+        -name "*.backup" -o \
+        -name "*.old" -o \
+        -name "*password*" -o \
+        -name "*secret*" -o \
+        -name "*credential*" \
+    \) 2>/dev/null | while read -r file; do
+        if [ -r "$file" ] && [ -s "$file" ]; then
+            # Skip binary files
+            if file "$file" 2>/dev/null | grep -qiE "(text|ascii|script)"; then
+                # Search for password patterns
+                for pattern in "${PASSWORD_PATTERNS[@]}"; do
+                    if grep -qiE "(^|[^a-zA-Z0-9_])${pattern}([^a-zA-Z0-9_]|$)" "$file" 2>/dev/null; then
+                        PASSWORD_FILES+=("$file")
+                        warning "Potential password/credential found in: $file"
+                        log "  File: $file"
+                        
+                        # Extract lines with potential passwords (max 5 lines per file)
+                        grep -iE "(^|[^a-zA-Z0-9_])${pattern}([^a-zA-Z0-9_]|$)" "$file" 2>/dev/null | head -5 | while read -r line; do
+                            # Mask potential passwords (show first 2 and last 2 chars)
+                            MASKED_LINE=$(echo "$line" | sed -E 's/([^=:[:space:]]{1,2})[^=:[:space:]]{4,}([^=:[:space:]]{1,2})/\1****\2/g' 2>/dev/null || echo "$line")
+                            log "    $MASKED_LINE"
+                        done
+                        
+                        # Check for common password formats
+                        if grep -qiE "(password|passwd|pwd)[[:space:]]*[=:][[:space:]]*[^[:space:]]{4,}" "$file" 2>/dev/null; then
+                            critical "Password pattern detected in: $file"
+                            show_exploit "Password in Config File" \
+                                "Extract password from configuration file." \
+                                "grep -i password $file\n# Or:\ncat $file | grep -i password"
+                        fi
+                        break
+                    fi
+                done
+            fi
+        fi
+    done
+}
+
+# Search in common locations
+for location in "${SEARCH_LOCATIONS[@]}"; do
+    if [ -d "$location" ] && [ -r "$location" ]; then
+        search_passwords "$location"
+    fi
+done
+
+# Search for .env files specifically
+info "Searching for .env files..."
+find / -maxdepth 5 -name ".env" -type f 2>/dev/null | head -20 | while read -r env_file; do
+    if [ -r "$env_file" ]; then
+        warning ".env file found: $env_file"
+        log "  File: $env_file"
+        # Show first few lines (masked)
+        head -10 "$env_file" 2>/dev/null | while read -r line; do
+            MASKED=$(echo "$line" | sed -E 's/([^=]{1,2})[^=]{4,}([^=]{1,2})/\1****\2/g' 2>/dev/null || echo "$line")
+            log "    $MASKED"
+        done
+        show_exploit ".env File" \
+            "Environment files often contain credentials." \
+            "cat $env_file"
+    fi
+done
+
+# Search for files with "password" in filename
+info "Searching for files with 'password' in name..."
+find / -maxdepth 4 -iname "*password*" -type f 2>/dev/null | head -20 | while read -r pass_file; do
+    if [ -r "$pass_file" ] && [ -s "$pass_file" ]; then
+        warning "File with 'password' in name: $pass_file"
+        log "  File: $pass_file"
+        ls -la "$pass_file" 2>/dev/null | tee -a "$OUTPUT_FILE"
+    fi
+done
+
+# Search for base64 encoded strings (potential passwords)
+info "Searching for base64 encoded strings (potential passwords)..."
+find "$HOME" /tmp /var/tmp -maxdepth 2 -type f -size -100k 2>/dev/null | head -50 | while read -r file; do
+    if [ -r "$file" ] && file "$file" 2>/dev/null | grep -qi "text"; then
+        # Look for base64-like strings (long strings of base64 chars)
+        BASE64_MATCH=$(grep -oE '[A-Za-z0-9+/]{20,}={0,2}' "$file" 2>/dev/null | head -3)
+        if [ -n "$BASE64_MATCH" ]; then
+            warning "Potential base64 encoded string in: $file"
+            log "  File: $file"
+            echo "$BASE64_MATCH" | while read -r b64; do
+                log "    $b64"
+            done
+        fi
+    fi
+done
+
+# Search for hex encoded strings
+info "Searching for hex encoded strings..."
+find "$HOME" /tmp /var/tmp -maxdepth 2 -type f -size -100k 2>/dev/null | head -50 | while read -r file; do
+    if [ -r "$file" ] && file "$file" 2>/dev/null | grep -qi "text"; then
+        # Look for hex-like strings
+        HEX_MATCH=$(grep -oE '[0-9a-fA-F]{32,}' "$file" 2>/dev/null | head -3)
+        if [ -n "$HEX_MATCH" ]; then
+            warning "Potential hex encoded string in: $file"
+            log "  File: $file"
+            echo "$HEX_MATCH" | while read -r hex; do
+                log "    $hex"
+            done
+        fi
+    fi
+done
+
+# Search in common config files
+info "Checking common configuration files for credentials..."
+
+CONFIG_FILES=(
+    "/etc/mysql/my.cnf"
+    "/etc/postgresql/postgresql.conf"
+    "/etc/apache2/apache2.conf"
+    "/etc/nginx/nginx.conf"
+    "/etc/ssh/sshd_config"
+    "/etc/vsftpd/vsftpd.conf"
+    "/etc/samba/smb.conf"
+    "/root/.bash_history"
+    "/root/.mysql_history"
+    "/root/.psql_history"
+)
+
+for config_file in "${CONFIG_FILES[@]}"; do
+    if [ -r "$config_file" ] && [ -f "$config_file" ]; then
+        if grep -qiE "(password|passwd|pwd|secret|key)" "$config_file" 2>/dev/null; then
+            warning "Potential credentials in: $config_file"
+            log "  File: $config_file"
+            grep -iE "(password|passwd|pwd|secret|key)" "$config_file" 2>/dev/null | head -5 | while read -r line; do
+                MASKED=$(echo "$line" | sed -E 's/([^=:[:space:]]{1,2})[^=:[:space:]]{4,}([^=:[:space:]]{1,2})/\1****\2/g' 2>/dev/null || echo "$line")
+                log "    $MASKED"
+            done
+        fi
+    fi
+done
+
+# Search in web application configs
+info "Searching for web application configuration files..."
+WEB_CONFIGS=(
+    "/var/www"
+    "/opt"
+    "/usr/local/www"
+    "/home/*/public_html"
+    "/home/*/www"
+)
+
+for web_dir in "${WEB_CONFIGS[@]}"; do
+    if [ -d "$web_dir" ] 2>/dev/null; then
+        find "$web_dir" -maxdepth 3 -type f \( \
+            -name "config.php" -o \
+            -name "config.inc.php" -o \
+            -name "database.php" -o \
+            -name "settings.php" -o \
+            -name "wp-config.php" -o \
+            -name "config.json" -o \
+            -name "application.properties" \
+        \) 2>/dev/null | head -20 | while read -r web_config; do
+            if [ -r "$web_config" ]; then
+                if grep -qiE "(password|passwd|db_password|dbpass)" "$web_config" 2>/dev/null; then
+                    warning "Potential database credentials in: $web_config"
+                    log "  File: $web_config"
+                    grep -iE "(password|passwd|db_password|dbpass|dbuser)" "$web_config" 2>/dev/null | head -5 | while read -r line; do
+                        MASKED=$(echo "$line" | sed -E 's/([^=:[:space:]]{1,2})[^=:[:space:]]{4,}([^=:[:space:]]{1,2})/\1****\2/g' 2>/dev/null || echo "$line")
+                        log "    $MASKED"
+                    done
+                    show_exploit "Web Config Credentials" \
+                        "Extract database credentials from web application config." \
+                        "grep -i password $web_config\n# Or view full file:\ncat $web_config"
+                fi
+            fi
+        done
+    fi
+done
+
+log ""
+if [ ${#PASSWORD_FILES[@]} -eq 0 ]; then
+    info "No obvious password patterns found in common locations"
+else
+    warning "Password patterns found in ${#PASSWORD_FILES[@]} file(s)! Review the files above carefully."
+fi
+
+################################################################################
+# 31. SUMMARY AND RECOMMENDATIONS
 ################################################################################
 progress "Final Summary"
-section "30. SUMMARY AND RECOMMENDATIONS"
+section "31. SUMMARY AND RECOMMENDATIONS"
 
 echo ""
 echo -e "${BRIGHT_GREEN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
