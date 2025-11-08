@@ -398,7 +398,7 @@ Kontribusi sangat diterima! Silakan:
 **MadExploits**
 
 - GitHub: [@MadExploits](https://github.com/MadExploits)
-- Repository: [root_priv](https://github.com/MadExploits/root_priv)
+- Repository: [linemadpeas](https://github.com/MadExploits/linemadpeas)
 
 ---
 
