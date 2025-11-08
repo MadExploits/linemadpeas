@@ -65,16 +65,16 @@ Tool ini sangat berguna untuk:
 ### **Metode 1: Clone Repository**
 
 ```bash
-git clone https://github.com/MadExploits/root_priv.git
-cd root_priv
-chmod +x linpeas.sh
+git clone https://github.com/MadExploits/linemadpeas.git
+cd linemadpeas
+chmod +x madpeas.sh
 ```
 
 ### **Metode 2: Download Manual**
 
 ```bash
-wget https://raw.githubusercontent.com/MadExploits/root_priv/main/linpeas.sh
-chmod +x linpeas.sh
+wget https://raw.githubusercontent.com/MadExploits/linemadpeas/refs/heads/main/madpeas.sh
+chmod +x madpeas.sh
 ```
 
 ### **Persyaratan**
@@ -91,7 +91,7 @@ chmod +x linpeas.sh
 ### **Basic Usage**
 
 ```bash
-./linpeas.sh
+./madpeas.sh
 ```
 
 ### **Dengan Output Custom**
@@ -106,13 +106,13 @@ chmod +x linpeas.sh
 
 ```bash
 # Upload script ke target
-scp linpeas.sh user@target:/tmp/
+scp madpeas.sh user@target:/tmp/
 
 # SSH ke target dan jalankan
 ssh user@target
 cd /tmp
-chmod +x linpeas.sh
-./linpeas.sh
+chmod +x madpeas.sh
+./madpeas.sh
 
 # Download hasil
 scp user@target:/tmp/privilege_escalation_report_*.txt ./
@@ -122,7 +122,7 @@ scp user@target:/tmp/exploit_methods_*.txt ./
 ### **Menggunakan dengan Curl (One-liner)**
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/MadExploits/root_priv/main/linpeas.sh | bash
+curl -sSL https://raw.githubusercontent.com/MadExploits/linemadpeas/refs/heads/main/madpeas.sh | bash
 ```
 
 ---
@@ -316,7 +316,7 @@ Example: git clone https://github.com/Arinerron/CVE-2022-0847...
 ### **Permission Denied**
 
 ```bash
-chmod +x linpeas.sh
+chmod +x madpeas.sh
 ```
 
 ### **Script Tidak Dapat Menjalankan Beberapa Checks**
